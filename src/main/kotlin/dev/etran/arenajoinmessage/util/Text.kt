@@ -16,6 +16,7 @@ object Text {
     }
 
     private val hexPattern = Regex("""&#([0-9a-fA-F]{6})""")
+    private val placeholderPattern = Regex("""\{([a-z_]+)}""")
 
     /** Translates `&a` style codes and `&#RRGGBB` hex codes into section-sign codes. */
     fun color(input: String): String {
@@ -30,12 +31,15 @@ object Text {
         return ChatColor.translateAlternateColorCodes('&', withHex)
     }
 
-    /** Replaces every `{key}` in [template] with its value. Values are inserted as-is (not color translated). */
-    fun fill(template: String, vars: Map<String, String>): String {
-        var result = template
-        for ((key, value) in vars) {
-            result = result.replace("{$key}", value)
-        }
-        return result
-    }
+    /**
+     * Replaces every `{key}` in [template] with its value, in ONE pass. Values are inserted as-is
+     * (not color translated) and are never scanned again, so a player or map called "{arena}"
+     * cannot inject another placeholder. Unknown placeholders are left untouched.
+     */
+    fun fill(template: String, vars: Map<String, String>): String =
+        if (vars.isEmpty()) template
+        else placeholderPattern.replace(template) { match -> vars[match.groupValues[1]] ?: match.value }
+
+    /** Removes every color/format code (section-sign codes, including hex). */
+    fun strip(input: String): String = ChatColor.stripColor(input) ?: input
 }

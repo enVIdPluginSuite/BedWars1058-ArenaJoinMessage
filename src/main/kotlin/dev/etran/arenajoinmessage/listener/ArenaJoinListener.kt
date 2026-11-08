@@ -8,13 +8,13 @@ import org.bukkit.event.Listener
 
 class ArenaJoinListener(private val plugin: ArenaJoinMessagePlugin) : Listener {
 
-    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    // MONITOR: runs after every other plugin had the chance to cancel the join.
+    @EventHandler(priority = EventPriority.MONITOR)
     fun onArenaJoin(event: PlayerJoinArenaEvent) {
+        // PlayerJoinArenaEvent has isCancelled() but does not implement Cancellable, so Bukkit's
+        // ignoreCancelled flag does nothing for it. Check by hand.
+        if (event.isCancelled) return
         if (event.isSpectator) return // spectators cannot be joined by clicking, so nothing to announce
-        val arena = event.arena
-        val player = event.player
-
-        // BedWars1058 calls this event before it adds the player, so wait one tick for the real player count.
-        plugin.server.scheduler.runTask(plugin, Runnable { plugin.notifier.announce(arena, player) })
+        plugin.notifier.queue(event.arena ?: return, event.player ?: return)
     }
 }

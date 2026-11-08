@@ -9,11 +9,12 @@
 #  Colors: &a &b &l ... and hex colors written as &#RRGGBB (servers 1.16+ only,
 #  hex codes are removed on older servers).
 #
-#  Placeholders for message.lines / message.hover / click.command / join.command:
-#    {player}       name of the player that joined
+#  Placeholders for message.lines / message.hover / message.click.command:
+#    {player}       name of the player that joined (the party leader when a party joins)
 #    {displayname}  display name of the player (includes rank prefix from chat plugins)
 #    {map}          arena display name
-#    {arena}        arena id (the BedWars1058 arena / world name)
+#    {arena}        arena name (with auto-scale, every copy of an arena has the same name)
+#    {id}           unique id of this exact game (the arena world name) - use this for links
 #    {group}        arena group
 #    {gamemode}     gamemode name, see "gamemodes" below
 #    {players}      players in the arena after the join
@@ -33,13 +34,17 @@ trigger:
   states:
     - waiting
     - starting
-  # Do not announce again for the same arena within this many seconds (0 = every join).
+  # Do not announce again for the same game within this many seconds (0 = every join).
+  # A party joining together always counts as ONE join.
   cooldown-seconds: 0
   # Do not announce arenas that are already full (nobody could join them).
   hide-when-full: true
   # Only announce when the arena has at least this many players after the join.
   min-players: 1
-  # Arena ids / groups that never get announced.
+  # During the start countdown, stop announcing when fewer than this many seconds are left
+  # (BedWars1058 refuses joins at 1 second, so a late click would only fail).
+  min-countdown-seconds: 3
+  # Arena names (or game ids) / groups that never get announced.
   arena-blacklist: []
   group-blacklist: []
 
@@ -61,7 +66,7 @@ recipients:
 # ---------------------------------------------------------------------------
 message:
   lines:
-    - "&b&lBED WARS &8» &e{displayname} &7joined &6{gamemode} &7on &b{map} &8(&a{players}&7/&a{max}&8) &6&lCLICK TO JOIN!"
+    - "&b&lBED WARS &8\u00BB &e{displayname} &7joined &6{gamemode} &7on &b{map} &8(&a{players}&7/&a{max}&8) &6&lCLICK TO JOIN!"
   hover:
     - "&eClick to join this game!"
     - ""
@@ -69,9 +74,10 @@ message:
     - "&7Map: &b{map}"
     - "&7Players: &a{players}&7/&a{max}"
   # What happens on click. RUN_COMMAND runs it right away, SUGGEST_COMMAND only fills the chat box.
+  # (Color codes are removed from the command automatically.)
   click:
     action: RUN_COMMAND
-    command: "/ajm join {arena}"
+    command: "/ajm join {id}"
   # Optional sound (names differ between versions, e.g. ORB_PICKUP on 1.8 and
   # ENTITY_EXPERIENCE_ORB_PICKUP on 1.9+). Unknown names are ignored with a console warning.
   sound:
@@ -81,12 +87,14 @@ message:
     pitch: 1.0
 
 # ---------------------------------------------------------------------------
-# What happens when a player clicks the message (/ajm join <arena>).
-# The plugin checks the arena first, then runs this command as the player, so
-# parties, VIP join and every other BedWars1058 rule behave exactly like /bw join.
+# What happens when a player clicks the message (/ajm join <id>).
+# The plugin checks the game is still joinable, then adds the player exactly like
+# /bw join does (parties, VIP slots and full-arena rules included).
+# Leave command empty for that (recommended). Set it to run your own command as the
+# player instead, e.g. "bw join {id}" ({id} / {arena} = the unique game id, {player}).
 # ---------------------------------------------------------------------------
 join:
-  command: "bw join {arena}"
+  command: ""
 
 # ---------------------------------------------------------------------------
 # Gamemode names.
@@ -111,6 +119,7 @@ messages:
   players-only: "&cThis can only be used by a player."
   unknown-subcommand: "&cUnknown subcommand. Use &f/ajm help&c."
   reloaded: "&aConfiguration reloaded."
+  reload-failed: "&cconfig.yml has an error, the previous settings are still active: &f{error}"
   toggled-on: "&aYou will now receive arena join notifications."
   toggled-off: "&eYou will no longer receive arena join notifications."
   opt-out-disabled: "&cThe server does not allow turning the notifications off."

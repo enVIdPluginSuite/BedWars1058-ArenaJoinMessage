@@ -1,6 +1,9 @@
 package dev.etran.arenajoinmessage.command
 
+import com.andrei1058.bedwars.api.BedWars
+import com.andrei1058.bedwars.api.arena.IArena
 import dev.etran.arenajoinmessage.ArenaJoinMessagePlugin
+import dev.etran.arenajoinmessage.notify.JoinNotifier
 import dev.etran.arenajoinmessage.util.ConfigEditor
 import dev.etran.arenajoinmessage.util.Text
 import org.bukkit.command.Command
@@ -10,12 +13,18 @@ import org.bukkit.command.TabCompleter
 import org.bukkit.configuration.ConfigurationSection
 import org.bukkit.entity.Player
 import java.io.IOException
+import java.nio.file.Files
 import java.util.Locale
+import java.util.UUID
+import java.util.logging.Level
 
 /** /ajm [help|toggle|reload|preview|get|set|join] */
 class AjmCommand(private val plugin: ArenaJoinMessagePlugin) : CommandExecutor, TabCompleter {
 
     private val settings get() = plugin.settings
+
+    /** Last click per player, to ignore double clicks / spam clicking the message. */
+    private val lastJoinClick = HashMap<UUID, Long>()
 
     override fun onCommand(sender: CommandSender, command: Command, label: String, args: Array<out String>): Boolean {
         val sub = args.firstOrNull()?.lowercase(Locale.ROOT) ?: "help"
@@ -54,8 +63,8 @@ class AjmCommand(private val plugin: ArenaJoinMessagePlugin) : CommandExecutor, 
     }
 
     private fun reload(sender: CommandSender) {
-        plugin.reloadAll()
-        reply(sender, "reloaded")
+        val error = plugin.reloadAll()
+        if (error == null) reply(sender, "reloaded") else reply(sender, "reload-failed", mapOf("error" to error))
     }
 
     private fun preview(sender: CommandSender) {
@@ -73,16 +82,17 @@ class AjmCommand(private val plugin: ArenaJoinMessagePlugin) : CommandExecutor, 
     private fun set(sender: CommandSender, args: Array<out String>) {
         if (args.size < 3) return sender.sendMessage(Text.color("&cUsage: /ajm set <path> <value>"))
         val path = args[1]
-        val raw = args.drop(2).joinToString(" ")
+        var raw = args.drop(2).joinToString(" ")
+        if (raw == "\"\"" || raw == "''") raw = "" // the only way to type an empty value
         val vars = mapOf("path" to path, "value" to raw)
         val config = plugin.config
 
         val current = config.get(path)
         if (current is ConfigurationSection || current is List<*>) return reply(sender, "set-not-scalar", vars)
-        if (current == null) {
-            // Only brand-new keys inside an existing section are allowed (e.g. a new gamemodes.<x> entry).
-            val parent = path.substringBeforeLast('.', "")
-            if (parent.isEmpty() || !config.isConfigurationSection(parent)) return reply(sender, "set-unknown-path", vars)
+        // Brand-new keys are only allowed for new gamemode names. Anything else is a typo and would
+        // otherwise be "saved" as a junk key that does nothing.
+        if (current == null && !(path.startsWith("gamemodes.") && path.count { it == '.' } == 1)) {
+            return reply(sender, "set-unknown-path", vars)
         }
 
         val parsed: Any = when (current) {
@@ -91,12 +101,24 @@ class AjmCommand(private val plugin: ArenaJoinMessagePlugin) : CommandExecutor, 
                 "false", "off", "no" -> false
                 else -> return reply(sender, "set-invalid-value", vars + ("type" to "true/false"))
             }
-            is Int, is Long, is Double -> raw.toIntOrNull() ?: raw.toDoubleOrNull()
-                ?: return reply(sender, "set-invalid-value", vars + ("type" to "number"))
+            is Number -> {
+                val asInt = raw.toIntOrNull()
+                val asDouble = raw.toDoubleOrNull()?.takeIf { it.isFinite() } // no NaN / Infinity
+                when {
+                    asInt != null -> asInt
+                    asDouble != null && path in DECIMAL_PATHS -> asDouble
+                    else -> return reply(sender, "set-invalid-value", vars + ("type" to if (path in DECIMAL_PATHS) "number" else "whole number"))
+                }
+            }
             else -> raw
         }
 
         val file = plugin.dataFolder.resolve("config.yml")
+        val backup = try {
+            Files.readAllBytes(file.toPath())
+        } catch (e: IOException) {
+            return reply(sender, "set-failed", vars + ("error" to (e.message ?: "cannot read config.yml")))
+        }
         val result = try {
             ConfigEditor.set(file, path, ConfigEditor.literal(parsed))
         } catch (e: IOException) {
@@ -104,11 +126,31 @@ class AjmCommand(private val plugin: ArenaJoinMessagePlugin) : CommandExecutor, 
         }
         when (result) {
             ConfigEditor.Result.UPDATED, ConfigEditor.Result.ADDED -> {
-                plugin.reloadAll()
+                val error = plugin.reloadAll()
+                // Double check the edit did what we meant. If not (an unusual config layout), undo it.
+                val now = plugin.config.get(path)
+                if (error != null || !sameValue(now, parsed)) {
+                    restore(file, backup)
+                    return reply(sender, "set-failed", vars + ("error" to (error ?: "the file layout could not be edited safely, edit config.yml by hand")))
+                }
                 reply(sender, "set-ok", mapOf("path" to path, "value" to parsed.toString()))
             }
             ConfigEditor.Result.NOT_SCALAR -> reply(sender, "set-not-scalar", vars)
             ConfigEditor.Result.NOT_FOUND -> reply(sender, "set-unknown-path", vars)
+        }
+    }
+
+    private fun sameValue(actual: Any?, expected: Any): Boolean = when {
+        actual is Number && expected is Number -> actual.toDouble() == expected.toDouble()
+        else -> actual?.toString() == expected.toString()
+    }
+
+    private fun restore(file: java.io.File, backup: ByteArray) {
+        try {
+            ConfigEditor.writeAtomically(file, String(backup, Charsets.UTF_8))
+            plugin.reloadAll()
+        } catch (e: IOException) {
+            plugin.logger.log(Level.SEVERE, "Could not restore config.yml after a failed /ajm set", e)
         }
     }
 
@@ -118,15 +160,64 @@ class AjmCommand(private val plugin: ArenaJoinMessagePlugin) : CommandExecutor, 
         if (!player.hasPermission("arenajoinmessage.join")) return reply(sender, "no-permission")
         val name = args.getOrNull(1) ?: return reply(sender, "join-usage")
 
-        val arenaUtil = plugin.bedWars.arenaUtil
-        val arena = arenaUtil.getArenaByName(name) ?: return reply(sender, "join-no-arena")
-        if (arenaUtil.getArenaByPlayer(player) != null) return reply(sender, "join-already-in-arena")
-        val status = arena.status.name.lowercase(Locale.ROOT)
-        if (status != "waiting" && status != "starting") return reply(sender, "join-not-joinable")
+        // Ignore a second click within a second (double click, lag): the first one is still being handled.
+        val now = System.currentTimeMillis()
+        val last = lastJoinClick[player.uniqueId]
+        if (last != null && now - last < CLICK_DEBOUNCE_MS) return
+        lastJoinClick[player.uniqueId] = now
+        if (lastJoinClick.size > 256) lastJoinClick.entries.removeIf { now - it.value >= CLICK_DEBOUNCE_MS }
 
-        // Hand over to the real join command so parties, VIP slots and every other rule keep working.
-        val command = Text.fill(settings.joinCommand, mapOf("arena" to arena.arenaName)).removePrefix("/")
-        plugin.server.dispatchCommand(player, command)
+        val bedWars = plugin.bedWars ?: return reply(sender, "join-no-arena")
+        val arenaUtil = bedWars.arenaUtil
+        if (arenaUtil.getArenaByPlayer(player) != null) return reply(sender, "join-already-in-arena")
+        val arena = resolveArena(bedWars, name) ?: return reply(sender, "join-no-arena")
+        if (!isJoinable(arena)) return reply(sender, "join-not-joinable")
+
+        val command = settings.joinCommand
+        try {
+            if (command.isEmpty()) {
+                // Exactly what /bw join does for an arena, without its name lookup (which prefers group names
+                // and, with auto-scale, picks a random clone). Parties, VIP and full checks happen inside.
+                arena.addPlayer(player, false)
+            } else {
+                // {arena} and {id} both mean the unique instance id here, which /bw join also accepts.
+                val id = JoinNotifier.arenaKey(arena)
+                val filled = Text.fill(command, mapOf("arena" to id, "id" to id, "player" to player.name))
+                plugin.server.dispatchCommand(player, filled.removePrefix("/"))
+            }
+        } catch (e: Exception) {
+            plugin.logger.log(Level.WARNING, "Joining ${player.name} to ${arena.arenaName} failed", e)
+            reply(sender, "join-not-joinable")
+        }
+    }
+
+    /**
+     * Finds the arena from the clicked link. Links carry the unique world id; a plain arena name (old links,
+     * typed by hand) is accepted too and, with auto-scale clones, resolves to a clone that can still be joined.
+     */
+    private fun resolveArena(bedWars: BedWars, name: String): IArena? {
+        val util = bedWars.arenaUtil
+        try {
+            util.getArenaByIdentifier(name)?.let { return it }
+        } catch (ignored: LinkageError) {
+            // older API without getArenaByIdentifier
+        }
+        val byName = util.getArenaByName(name)
+        if (byName != null && isJoinable(byName)) return byName
+        val joinableClone = util.arenas
+            .filter { it.arenaName.equals(name, ignoreCase = true) && isJoinable(it) }
+            .filter { it.maxPlayers <= 0 || it.players.size < it.maxPlayers }
+            .maxByOrNull { it.players.size }
+        return joinableClone ?: byName
+    }
+
+    private fun isJoinable(arena: IArena): Boolean {
+        return when (arena.status?.name?.lowercase(Locale.ROOT)) {
+            "waiting" -> true
+            // BedWars1058 refuses joins once the countdown is at 1.
+            "starting" -> (arena.startingTask?.countdown ?: Int.MAX_VALUE) > 1
+            else -> false
+        }
     }
 
     // --- tab completion ------------------------------------------------------------------------
@@ -140,13 +231,13 @@ class AjmCommand(private val plugin: ArenaJoinMessagePlugin) : CommandExecutor, 
             }
             2 -> when (args[0].lowercase(Locale.ROOT)) {
                 "get", "set" -> if (admin) settingPaths() else emptyList()
-                "join" -> plugin.bedWars.arenaUtil.arenas.map { it.arenaName }
+                "join" -> plugin.bedWars?.arenaUtil?.arenas?.mapNotNull { it.arenaName }?.distinct() ?: emptyList()
                 else -> emptyList()
             }
             3 -> if (admin && args[0].equals("set", ignoreCase = true)) valueHints(args[1]) else emptyList()
             else -> emptyList()
         }
-        val typed = args.last().lowercase(Locale.ROOT)
+        val typed = (args.lastOrNull() ?: "").lowercase(Locale.ROOT)
         return options.filter { it.lowercase(Locale.ROOT).startsWith(typed) }
     }
 
@@ -170,5 +261,11 @@ class AjmCommand(private val plugin: ArenaJoinMessagePlugin) : CommandExecutor, 
 
     private inline fun adminOnly(sender: CommandSender, action: () -> Unit) {
         if (sender.hasPermission("arenajoinmessage.admin")) action() else reply(sender, "no-permission")
+    }
+
+    private companion object {
+        const val CLICK_DEBOUNCE_MS = 1000L
+        /** Numeric options that accept decimals; every other number is a whole number. */
+        val DECIMAL_PATHS = setOf("trigger.cooldown-seconds", "message.sound.volume", "message.sound.pitch")
     }
 }
