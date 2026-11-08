@@ -1,0 +1,36 @@
+name: BedWars1058-ArenaJoinMessage
+version: ${version}
+main: dev.etran.arenajoinmessage.ArenaJoinMessagePlugin
+# Legacy (1.8 - 1.12) servers ignore api-version; 1.13+ servers accept it. No materials are used.
+api-version: '1.13'
+depend: [BedWars1058]
+authors: [etran]
+description: Hypixel-style "join this arena" chat notification for BedWars1058.
+
+commands:
+  ajm:
+    description: BedWars1058-ArenaJoinMessage main command
+    usage: /<command> [help|toggle|reload|preview|get|set|join]
+    aliases: [arenajoinmessage, arenajoin]
+
+permissions:
+  arenajoinmessage.*:
+    description: All ArenaJoinMessage permissions
+    default: op
+    children:
+      arenajoinmessage.admin: true
+      arenajoinmessage.receive: true
+      arenajoinmessage.join: true
+      arenajoinmessage.toggle: true
+  arenajoinmessage.admin:
+    description: Reload, preview, get and set config values
+    default: op
+  arenajoinmessage.receive:
+    description: Receive arena join notifications
+    default: true
+  arenajoinmessage.join:
+    description: Use the click-to-join link (/ajm join)
+    default: true
+  arenajoinmessage.toggle:
+    description: Turn notifications on/off for yourself (/ajm toggle)
+    default: true

@@ -1,0 +1,127 @@
+# ============================================================================
+#  BedWars1058-ArenaJoinMessage
+#
+#  Edit this file and run /ajm reload, or change single values in game with
+#      /ajm set <path> <value>        (comments in this file are preserved)
+#      /ajm get <path>
+#  Use /ajm preview to see the current message.
+#
+#  Colors: &a &b &l ... and hex colors written as &#RRGGBB (servers 1.16+ only,
+#  hex codes are removed on older servers).
+#
+#  Placeholders for message.lines / message.hover / click.command / join.command:
+#    {player}       name of the player that joined
+#    {displayname}  display name of the player (includes rank prefix from chat plugins)
+#    {map}          arena display name
+#    {arena}        arena id (the BedWars1058 arena / world name)
+#    {group}        arena group
+#    {gamemode}     gamemode name, see "gamemodes" below
+#    {players}      players in the arena after the join
+#    {max}          maximum players of the arena
+#    {status}       waiting / starting
+# ============================================================================
+
+# Master switch.
+enabled: true
+
+# ---------------------------------------------------------------------------
+# When is a notification sent?
+# ---------------------------------------------------------------------------
+trigger:
+  # Only announce arenas that are in one of these states (waiting, starting).
+  # (list values can only be changed by editing this file + /ajm reload)
+  states:
+    - waiting
+    - starting
+  # Do not announce again for the same arena within this many seconds (0 = every join).
+  cooldown-seconds: 0
+  # Do not announce arenas that are already full (nobody could join them).
+  hide-when-full: true
+  # Only announce when the arena has at least this many players after the join.
+  min-players: 1
+  # Arena ids / groups that never get announced.
+  arena-blacklist: []
+  group-blacklist: []
+
+# ---------------------------------------------------------------------------
+# Who receives it? (The player that joined never receives it.)
+# ---------------------------------------------------------------------------
+recipients:
+  # Players that are currently inside any BedWars arena (playing or spectating) are skipped.
+  exclude-players-in-arenas: true
+  # Only players standing in these worlds receive it. Empty = every world.
+  only-worlds: []
+  # Let players hide the notifications for themselves with /ajm toggle.
+  allow-opt-out: true
+
+# ---------------------------------------------------------------------------
+# The notification itself.
+# Every line is clickable and shows the hover text. Use several lines if you want
+# a header / footer, e.g. a separator line above and below.
+# ---------------------------------------------------------------------------
+message:
+  lines:
+    - "&b&lBED WARS &8» &e{displayname} &7joined &6{gamemode} &7on &b{map} &8(&a{players}&7/&a{max}&8) &6&lCLICK TO JOIN!"
+  hover:
+    - "&eClick to join this game!"
+    - ""
+    - "&7Gamemode: &6{gamemode}"
+    - "&7Map: &b{map}"
+    - "&7Players: &a{players}&7/&a{max}"
+  # What happens on click. RUN_COMMAND runs it right away, SUGGEST_COMMAND only fills the chat box.
+  click:
+    action: RUN_COMMAND
+    command: "/ajm join {arena}"
+  # Optional sound (names differ between versions, e.g. ORB_PICKUP on 1.8 and
+  # ENTITY_EXPERIENCE_ORB_PICKUP on 1.9+). Unknown names are ignored with a console warning.
+  sound:
+    enabled: false
+    name: "ENTITY_EXPERIENCE_ORB_PICKUP"
+    volume: 1.0
+    pitch: 1.0
+
+# ---------------------------------------------------------------------------
+# What happens when a player clicks the message (/ajm join <arena>).
+# The plugin checks the arena first, then runs this command as the player, so
+# parties, VIP join and every other BedWars1058 rule behave exactly like /bw join.
+# ---------------------------------------------------------------------------
+join:
+  command: "bw join {arena}"
+
+# ---------------------------------------------------------------------------
+# Gamemode names.
+# The plugin looks for "<teams>x<players per team>" first, then "<players per team>".
+# Anything not listed falls back to "fallback" ({vs} = e.g. 4v4v4v4, {teams}, {per_team}).
+# ---------------------------------------------------------------------------
+gamemodes:
+  "1": "Solo"
+  "2": "Doubles"
+  "3": "3v3v3v3"
+  "4": "4v4v4v4"
+  "2x4": "4v4"
+  "2x2": "2v2"
+  fallback: "{vs}"
+
+# ---------------------------------------------------------------------------
+# Plugin messages (shown to players / admins running /ajm).
+# ---------------------------------------------------------------------------
+messages:
+  prefix: "&b[ArenaJoinMessage] &r"
+  no-permission: "&cYou do not have permission to do that."
+  players-only: "&cThis can only be used by a player."
+  unknown-subcommand: "&cUnknown subcommand. Use &f/ajm help&c."
+  reloaded: "&aConfiguration reloaded."
+  toggled-on: "&aYou will now receive arena join notifications."
+  toggled-off: "&eYou will no longer receive arena join notifications."
+  opt-out-disabled: "&cThe server does not allow turning the notifications off."
+  preview-header: "&7Preview of the notification:"
+  join-usage: "&cUsage: /ajm join <arena>"
+  join-no-arena: "&cThat arena does not exist anymore."
+  join-already-in-arena: "&cYou are already in an arena."
+  join-not-joinable: "&cThat game has already started."
+  get-value: "&e{path} &7= &f{value}"
+  set-ok: "&aSet &e{path} &ato &f{value}&a."
+  set-unknown-path: "&cUnknown setting &e{path}&c. Press TAB to see all settings."
+  set-not-scalar: "&c{path} is a section or a list. Edit config.yml and use /ajm reload."
+  set-invalid-value: "&c'{value}' is not a valid {type} for {path}."
+  set-failed: "&cCould not write config.yml: {error}"
